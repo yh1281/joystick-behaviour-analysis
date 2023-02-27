@@ -4,18 +4,18 @@ import scipy
 import numpy as np
 import pandas as pd
 import sysl
-
+import math
+import chardet
 ##Data extraction and reformat
-data_path ='/Users/yilinhao/Downloads/js data_Yilin/661/task_autonomous_230127_661_1256.txt'
+data_path ='/Users/yilinhao/Downloads/js data_Yilin/663/task_autonomous_230218_663_1222.txt'
 data=np.loadtxt(data_path,dtype="str")
-data[0,0]=data[0,0].replace('\x00', '')
+data[868,0]=data[868,0].replace('\x00', '')
 time=list(((data[:,0])).astype(int))
 x=list(((data[:,1])).astype(float))
 y=list(((data[:,2])).astype(float))
 lock=list(((data[:,3])).astype(int))
 tone=list(((data[:,4])).astype(int))
 reward=list(((data[:,5])).astype(int))
-
 
 '''data = pd.read_csv(data_path, sep="/t", header=None)
 data.columns = ["time_ms", "x_mm","y_mm","jslock","toneon","rvalveopen","rewards_total",'o']
@@ -45,8 +45,8 @@ for n in range(0, len(lock)-1):
         js_lock_index.append(n)
     elif lock[n] == 1 and lock[n+1] == 0:
         js_unlock_index.append(n)
-js_lock_index = js_lock_index[1:-1]
-js_unlock_index = js_unlock_index[:-1]
+js_lock_index = js_lock_index[:]
+js_unlock_index = js_unlock_index[:]
 ##Find joystick lock and unlock times
 js_lock_times = []
 js_unlock_times = []
@@ -82,15 +82,17 @@ for f in js_lock_index:
 
 ##xy data preprocess
 x = np.array(x)
-x_baseline = np.mean(x[9978:10126])
+x_baseline = np.mean(x[0:20])
 x = x-x_baseline
 y = np.array(y)
-y_baseline = np.mean(y[9978:10126])
+y_baseline = np.mean(y[0:20])
 y = y-y_baseline
+##output_x = scipy.signal.savgol_filter(x, 51, 2)
 output_x = scipy.signal.savgol_filter(x, 51, 2)
 output_y = scipy.signal.savgol_filter(y, 51, 2)
 
-##Detect IGM
+
+##Detect movement onset
 movement_onset_index_list = []
 move_onset_latency_list= []
 move_onset_time_list = []
@@ -122,16 +124,13 @@ for i in range(len(js_unlock_index)):
             move_onset_time_list.append(move_onset_time)
 
 all_time_hypotenuse = np.sqrt((output_x ** 2) + (output_y ** 2))
-pyplot.plot(time,all_time_hypotenuse)
+pyplot.plot(time,all_time_hypotenuse,'o')
 pyplot.plot(time,lock)
 pyplot.plot(time,tone)
+pyplot.plot(time,reward)
 #pyplot.plot(move_onset_time_list,np.zeros(len(move_onset_time_list)),'o')
 pyplot.plot(time,reset_break,'o')
 pyplot.hist(move_onset_latency_list, bins=np.linspace(0,2000,100))
-
-for m in range(len(move_onset_latency_list)):
-    if move_onset_latency_list[m]==0:
-        print(m)
 
 
 ##Exclude lock and unlock events due to imbalances and premature movements
@@ -161,7 +160,7 @@ for w in range(len(all_time_hypotenuse)):
     if all_time_hypotenuse[w]>1.28:
         reset_break_index.append(w)
 reset_break_index=np.array(reset_break_index)
-##
+##Detect engaged and non-engaged tone
 engaged_tone = []
 unengaged_tone = []
 for i in range(len(tone_onset)):
@@ -171,3 +170,67 @@ for i in range(len(tone_onset)):
     else:
         unengaged_tone.append(tone_onset[i])
 
+## Detect rewarded tone and non-rewarded ton
+rewarded_tone = []
+rewarded_tone_offset = []
+nonrewarded_tone = []
+nonrewarded_tone_offset = []
+for s in range(len(tone_onset)):
+    data=reward[tone_onset[s]:tone_pos_lock_index[s]]
+    if sum(data)>=1:
+        rewarded_tone.append(tone_onset[s])
+        rewarded_tone_offset.append(tone_offset[s])
+    else:
+        nonrewarded_tone.append(tone_onset[s])
+        nonrewarded_tone_offset.append(tone_offset[s])
+
+
+## hypotenuse = np.sqrt(x_traj_post_tone**2 + y_traj_post_tone**2)
+##angle = np.arctan(y_traj_post_tone/x_traj_post_tone)
+        pyplot.plot(x_traj_post_tone, y_traj_post_tone)
+        pyplot.plot(x_traj_post_tone, y_traj_post_tone, 'o', markersize=1.5)
+        pyplot.xlim(-7, 7)
+
+fig = pyplot.figure(figsize=(9, 9))
+pyplot.subplots_adjust(wspace=0.5,hspace=0.5)
+for idx,t in enumerate(tone_onset[101:201]):
+    ax = pyplot.subplot(10, 10, idx + 1)
+    start_time = tone_onset[idx]
+    if start_time in rewarded_tone:
+        end_time = start_time+35
+        x_traj_post_tone = np.array(x[start_time:end_time])
+        y_traj_post_tone = np.array(y[start_time:end_time])
+       ## hypotenuse = np.sqrt(x_traj_post_tone**2 + y_traj_post_tone**2)
+        ##angle = np.arctan(y_traj_post_tone/x_traj_post_tone)
+        pyplot.plot(x_traj_post_tone,y_traj_post_tone)
+        pyplot.plot(x_traj_post_tone, y_traj_post_tone,'o',markersize=1.5)
+        pyplot.xlim(-8, 8)
+        pyplot.ylim(-1, 8)
+        #pyplot.axhline(3,color="g")
+        #pyplot.axhline(7,color="g")
+        circle1=pyplot.Circle((0, 0), 3, color='g', fill=False)
+        circle2=pyplot.Circle((0,0),7,color='g', fill=False)
+        ax.add_patch(circle1)
+        ax.add_patch(circle2)
+
+    else:
+        end_time = tone_offset[idx]
+        x_traj_post_tone = np.array(x[start_time:end_time])
+        y_traj_post_tone = np.array(y[start_time:end_time])
+        pyplot.plot(x_traj_post_tone, y_traj_post_tone)
+        pyplot.plot(x_traj_post_tone, y_traj_post_tone, 'o', markersize=1.5)
+        pyplot.xlim(-8, 8)
+        pyplot.ylim(-1, 8)
+        #pyplot.axhline(3,color="r")
+        #pyplot.axhline(7,color="r")
+        circle3=pyplot.Circle((0, 0), 3,color='r', fill=False)
+        circle4=pyplot.Circle((0, 0), 7,color='r', fill=False)
+        ax.add_patch(circle3)
+        ax.add_patch(circle4)
+
+fig2=pyplot.figure()
+pyplot.plot(all_time_hypotenuse)
+pyplot.plot(all_time_hypotenuse,'o')
+pyplot.plot(tone)
+pyplot.plot(reward)
+pyplot.plot(y,'o')
