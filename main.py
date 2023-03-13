@@ -7,7 +7,7 @@ import sysl
 import math
 import chardet
 ##Data extraction and reformat
-data_path ='/Users/yilinhao/Downloads/js data_Yilin/663/task_autonomous_230218_663_1222.txt'
+data_path ='/Users/yilinhao/Downloads/large_rwzone_230310_8212_1213.txt'
 data=np.loadtxt(data_path,dtype="str")
 data[868,0]=data[868,0].replace('\x00', '')
 time=list(((data[:,0])).astype(int))
@@ -17,11 +17,20 @@ lock=list(((data[:,3])).astype(int))
 tone=list(((data[:,4])).astype(int))
 reward=list(((data[:,5])).astype(int))
 
-'''data = pd.read_csv(data_path, sep="/t", header=None)
-data.columns = ["time_ms", "x_mm","y_mm","jslock","toneon","rvalveopen","rewards_total",'o']
-data.drop(columns=['o'],inplace=True)
-data=data.dropna(axis=0)
-data'''
+segment1 = time[:279234]
+segment2 = time[279234:362352]
+segment3 = time[362352:534849]
+segment4 = time[534849:]
+
+for i,t in enumerate(segment2):
+    segment2[i] = segment2[i]-1000+502862
+
+for i,t in enumerate(segment3):
+    segment3[i] = segment3[i]-3100+segment2[-1]
+
+for i,t in enumerate(segment4):
+    segment4[i] = segment4[i]-3100+segment3[-1]
+time = segment1+segment2+segment3+segment4
 
 ##Find tone onset and offset
 tone_onset = []
@@ -82,23 +91,23 @@ for f in js_lock_index:
 
 ##xy data preprocess
 x = np.array(x)
-x_baseline = np.mean(x[0:20])
+x_baseline = np.mean(x[0:200])
 x = x-x_baseline
 y = np.array(y)
-y_baseline = np.mean(y[0:20])
+y_baseline = np.mean(y[0:200])
 y = y-y_baseline
 ##output_x = scipy.signal.savgol_filter(x, 51, 2)
-output_x = scipy.signal.savgol_filter(x, 51, 2)
-output_y = scipy.signal.savgol_filter(y, 51, 2)
+output_x = scipy.signal.savgol_filter(x, 25, 2)
+output_y = scipy.signal.savgol_filter(y, 25, 2)
 
 
 ##Detect movement onset
 movement_onset_index_list = []
 move_onset_latency_list= []
 move_onset_time_list = []
-for i in range(len(js_unlock_index)):
-    start_point = js_unlock_index[i]
-    end_point = js_lock_index[i]
+for i in range(len(tone_neg_unlock_index)):
+    start_point = tone_neg_unlock_index[i]
+    end_point = tone_neg_lock_index[i]
     x_trajectory = np.array(output_x[start_point:end_point])
     y_trajectory = np.array(output_y[start_point:end_point])
     time_trajectory = np.array(time[start_point:end_point])
@@ -123,14 +132,26 @@ for i in range(len(js_unlock_index)):
             move_onset_latency_list.append(move_onset_latency)
             move_onset_time_list.append(move_onset_time)
 
+#no of IGM and imbalances
+IGM_latency = []
+no_of_imbalanecs = []
+for f in move_onset_latency_list:
+    if f>=500:
+        IGM_latency.append(f)
+    else:
+        no_of_imbalanecs.append(f)
+print(no_of_imbalanecs)
+
 all_time_hypotenuse = np.sqrt((output_x ** 2) + (output_y ** 2))
-pyplot.plot(time,all_time_hypotenuse,'o')
+pyplot.plot(time,all_time_hypotenuse)
 pyplot.plot(time,lock)
 pyplot.plot(time,tone)
 pyplot.plot(time,reward)
 #pyplot.plot(move_onset_time_list,np.zeros(len(move_onset_time_list)),'o')
 pyplot.plot(time,reset_break,'o')
-pyplot.hist(move_onset_latency_list, bins=np.linspace(0,2000,100))
+pyplot.hist(move_onset_latency_list, bins=np.linspace(0,3000,100))
+pyplot.axvline(0,color='r',alpha=0.3,label='Joystick unlock')
+pyplot.legend()
 
 
 ##Exclude lock and unlock events due to imbalances and premature movements
@@ -228,9 +249,47 @@ for idx,t in enumerate(tone_onset[101:201]):
         ax.add_patch(circle3)
         ax.add_patch(circle4)
 
-fig2=pyplot.figure()
-pyplot.plot(all_time_hypotenuse)
-pyplot.plot(all_time_hypotenuse,'o')
-pyplot.plot(tone)
-pyplot.plot(reward)
-pyplot.plot(y,'o')
+hit_tone_onset_index = []
+hit_tone_offset_index = []
+for j in reward_index:
+    for k in range(len(tone_offset)):
+        if 0<j-tone_offset[k]<1000:
+            hit_tone_onset_index.append(tone_onset[k])
+            hit_tone_offset_index.append(tone_offset[k])
+
+tone_pos_move_latency_list = []
+tone_pos_move_time_list = []
+for i in range(len(hit_tone_onset_index)):
+    start_point = hit_tone_onset_index[i]
+    end_point = hit_tone_offset_index[i]
+    x_trajectory = np.array(output_x[start_point:end_point])
+    y_trajectory = np.array(output_y[start_point:end_point])
+    time_trajectory = np.array(time[start_point:end_point])
+    hypotenuse = np.sqrt((x_trajectory**2)+(y_trajectory**2))
+    for j in range(len(hypotenuse)):
+            if hypotenuse[j]>=1.28:
+                movement_radius=j
+                break
+            else:
+                movement_radius=-1
+        hypotenuse_cut=np.array(hypotenuse[0:movement_radius])
+        hypotenuse_cut=np.flip(hypotenuse_cut)
+        time_cut=np.array(time_trajectory[0:movement_radius])
+        time_cut=np.flip(time_cut)
+        if movement_radius>0:
+            for h in range(len(hypotenuse_cut)-1):
+                if hypotenuse_cut[h]<=hypotenuse_cut[h+1]:
+                    move_onset_time=time_cut[h]
+                    tone_onset_time = time_cut[-1]
+                    break
+            tone_pos_move_latency = move_onset_time - tone_onset_time
+            tone_pos_move_latency_list.append(tone_pos_move_latency)
+            tone_pos_move_time_list.append(move_onset_time)
+
+pyplot.plot(time,reward)
+pyplot.plot(tone_pos_move_time_list,np.ones(len(tone_pos_move_time_list)),'o')
+pyplot.plot(time,tone)
+pyplot.plot(time,all_time_hypotenuse)
+pyplot.hist(tone_pos_move_latency_list, bins=np.linspace(0,2500,100))
+pyplot.axvline(0,color='r',alpha=0.3,label='Tone onset')
+pyplot.legend()
